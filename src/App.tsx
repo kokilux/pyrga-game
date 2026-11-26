@@ -11,6 +11,7 @@ import {
   getBannedShape,
   getFeatureVector,
   getLegalMoves,
+  hashBoard,
   isDirValidForCell,
   partialOwner,
   startingInventory,
@@ -381,7 +382,7 @@ export default function App() {
     const timer = setTimeout(async () => {
       const s = latestStateRef.current;
       try {
-        const result = await callWorker<{ move: FullLegalMove; stats: { nodes: number; patternsAvoided: number; eval: number } }>(
+        const result = await callWorker<{ move: FullLegalMove; stats: { nodes: number; patternsAvoided: number; eval: number; provenLossMoves?: FullLegalMove[] } }>(
           "ai-move",
           {
             board: s.board,
@@ -401,6 +402,31 @@ export default function App() {
         const cur = latestStateRef.current;
         if (cur.gameOver || cur.winner || cur.currentPlayer !== s.currentPlayer) return;
         setSearchStats(result.stats);
+
+        // Learn to avoid proven-loss moves discovered by search.
+        const proven = result.stats.provenLossMoves ?? [];
+        if (proven.length > 0) {
+          const bHash = hashBoard(s.board, s.currentPlayer);
+          const wMovesN = generateAllLegalMoves(s.board, s.lastMove, s.inventory.white, getBannedShape("white", s.moveHistoryLen, s.whiteFirstShape)).length;
+          const bMovesN = generateAllLegalMoves(s.board, s.lastMove, s.inventory.black, getBannedShape("black", s.moveHistoryLen, s.whiteFirstShape)).length;
+          const feats = getFeatureVector(s.board, wMovesN, bMovesN, s.inventory);
+          const newLosses = proven
+            .slice(0, 4)
+            .filter((m) => !(m.row === result.move.row && m.col === result.move.col && m.shape === result.move.shape && m.dir === result.move.dir))
+            .map((m) => ({
+              boardHash: bHash,
+              features: feats,
+              move: m,
+              player: s.currentPlayer,
+              gamePhase: s.moveHistoryLen,
+              timestamp: Date.now(),
+            }));
+          if (newLosses.length > 0) {
+            setLostPatterns((prev) => appendBoundedPatterns(prev, newLosses, MAX_PATTERNS));
+            setLearningHistory((prev) => ({ ...prev, patternsLearned: prev.patternsLearned + newLosses.length, lastUpdateTime: Date.now() }));
+          }
+        }
+
         executeMove(result.move);
       } catch (e) {
         if (!cancelled) console.error("AI Error:", e);
@@ -748,7 +774,13 @@ export default function App() {
                 <WeightBar label="w7: ●残り数" value={aiWeights.ciInv} maxVal={maxWeightValue} color="bg-green-400" />
                 <WeightBar label="w8: 中央支配" value={aiWeights.center} maxVal={maxWeightValue} color="bg-violet-400" />
                 <WeightBar label="w9: リーチ" value={aiWeights.completion} maxVal={maxWeightValue} color="bg-pink-400" />
-                <WeightBar label="w10: パターン回避" value={aiWeights.patternAvoid} maxVal={maxWeightValue} color="bg-red-400" desc="過去に負けにつながった手を避ける重み" />
+                <WeightBar label="w10: 即時脅威" value={aiWeights.threat} maxVal={maxWeightValue} color="bg-red-400" desc="次に塔を完成できる脅威の差" />
+                <WeightBar label="w11: 被脅威" value={aiWeights.oppThreat} maxVal={maxWeightValue} color="bg-red-300" desc="相手の即時脅威に対する警戒度" />
+                <WeightBar label="w12: 二重脅威" value={aiWeights.doubleThreat} maxVal={maxWeightValue} color="bg-fuchsia-400" desc="同時に2つ以上の完成脅威を作る強さ" />
+                <WeightBar label="w13: ライン制御" value={aiWeights.lineControl} maxVal={maxWeightValue} color="bg-cyan-400" desc="三角の向きによるライン支配" />
+                <WeightBar label="w14: 角支配" value={aiWeights.cornerControl} maxVal={maxWeightValue} color="bg-lime-400" desc="角マスの優勢" />
+                <WeightBar label="w15: 駒種多様性" value={aiWeights.shapeDiversity} maxVal={maxWeightValue} color="bg-yellow-400" desc="使える駒種の多様性" />
+                <WeightBar label="w16: パターン回避" value={aiWeights.patternAvoid} maxVal={maxWeightValue} color="bg-slate-300" desc="過去に負けにつながった手を避ける重み" />
               </div>
 
               <div className="rounded-xl border border-slate-800 bg-slate-900 px-3 py-2.5 text-xs text-slate-400">

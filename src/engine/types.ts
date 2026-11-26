@@ -42,6 +42,13 @@ export interface AIWeights {
   center: number;
   completion: number;
   patternAvoid: number;
+  // Extended tactical/positional features
+  threat: number;
+  oppThreat: number;
+  doubleThreat: number;
+  lineControl: number;
+  cornerControl: number;
+  shapeDiversity: number;
 }
 
 export type BoardHash = string;
@@ -86,6 +93,7 @@ export interface LearningHistory {
 export interface SearchStats {
   nodes: number;
   patternsAvoided: number;
+  provenLossMoves?: FullLegalMove[];
 }
 
 export interface GameRecord {
