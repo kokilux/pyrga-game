@@ -8,10 +8,10 @@ import {
   generateAllLegalMoves,
   getBannedShape,
   getFeatureVector,
-  hashBoard,
   hashMove,
   startingInventory,
 } from "./rules";
+import { canonicalizePattern } from "./symmetry";
 import type {
   AIWeights,
   Color,
@@ -127,13 +127,13 @@ export function extractLearningPatterns(
   const criticalMoves = loserMoves.slice(-5);
 
   for (const m of criticalMoves) {
-    const boardHash = hashBoard(m.board, m.player);
-    const exists = lostPatterns.some((p) => p.boardHash === boardHash && hashMove(p.move) === hashMove(m.move));
+    const canon = canonicalizePattern(m.board, m.player, m.move);
+    const exists = lostPatterns.some((p) => p.boardHash === canon.hash && hashMove(p.move) === hashMove(canon.move));
     if (!exists) {
       newLostPatterns.push({
-        boardHash,
+        boardHash: canon.hash,
         features: m.features,
-        move: m.move,
+        move: canon.move,
         player: m.player,
         gamePhase: gameRecord.moves.indexOf(m),
         timestamp: Date.now(),
@@ -145,13 +145,13 @@ export function extractLearningPatterns(
   const winnerCritical = winnerMoves.slice(-3);
 
   for (const m of winnerCritical) {
-    const boardHash = hashBoard(m.board, m.player);
-    const exists = winPatterns.some((p) => p.boardHash === boardHash && hashMove(p.move) === hashMove(m.move));
+    const canon = canonicalizePattern(m.board, m.player, m.move);
+    const exists = winPatterns.some((p) => p.boardHash === canon.hash && hashMove(p.move) === hashMove(canon.move));
     if (!exists) {
       newWinPatterns.push({
-        boardHash,
+        boardHash: canon.hash,
         features: m.features,
-        move: m.move,
+        move: canon.move,
         player: m.player,
         gamePhase: gameRecord.moves.indexOf(m),
         timestamp: Date.now(),

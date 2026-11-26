@@ -8,11 +8,11 @@ import {
   getBannedShape,
   featureSimilarity,
   getFeatureVector,
-  hashBoard,
   hashMove,
   pieceCounts,
   dirVector,
 } from "./rules";
+import { canonicalizePattern } from "./symmetry";
 import { zobristKey } from "./zobrist";
 import type {
   AIWeights,
@@ -67,38 +67,30 @@ function evaluateBoard(
   if (f.tower >= 2) baseScore += f.threat * 40; // threats near win are critical
 
   if (currentMove && lostPatterns.length > 0) {
-    const boardHash = hashBoard(board, currentPlayer);
+    const canon = canonicalizePattern(board, currentPlayer, currentMove);
+    const moveHash = hashMove(canon.move);
 
     for (const lp of lostPatterns) {
-      if (lp.boardHash === boardHash && lp.player === currentPlayer) {
-        const moveHash = hashMove(currentMove);
-        const lpMoveHash = hashMove(lp.move);
-        if (moveHash === lpMoveHash) {
-          baseScore -= weights.patternAvoid * 2;
-        }
+      if (lp.player !== currentPlayer) continue;
+      if (lp.boardHash === canon.hash && hashMove(lp.move) === moveHash) {
+        baseScore -= weights.patternAvoid * 2;
+        continue;
       }
-
       const similarity = featureSimilarity(f, lp.features);
-      if (similarity > 0.85 && lp.player === currentPlayer) {
-        const moveHash = hashMove(currentMove);
-        const lpMoveHash = hashMove(lp.move);
-        if (moveHash === lpMoveHash) {
-          baseScore -= weights.patternAvoid * similarity;
-        }
+      if (similarity > 0.85 && hashMove(lp.move) === moveHash) {
+        baseScore -= weights.patternAvoid * similarity;
       }
     }
   }
 
   if (currentMove && winPatterns.length > 0) {
-    const boardHash = hashBoard(board, currentPlayer);
+    const canon = canonicalizePattern(board, currentPlayer, currentMove);
+    const moveHash = hashMove(canon.move);
 
     for (const wp of winPatterns) {
-      if (wp.boardHash === boardHash && wp.player === currentPlayer) {
-        const moveHash = hashMove(currentMove);
-        const wpMoveHash = hashMove(wp.move);
-        if (moveHash === wpMoveHash) {
-          baseScore += weights.patternAvoid * 0.5;
-        }
+      if (wp.player !== currentPlayer) continue;
+      if (wp.boardHash === canon.hash && hashMove(wp.move) === moveHash) {
+        baseScore += weights.patternAvoid * 0.5;
       }
     }
   }
@@ -165,6 +157,7 @@ export interface AlphaBetaOptions {
   deadlineMs?: number;
   killers?: FullLegalMove[][];
   historyTable?: Record<string, number>;
+  exact?: boolean;
 }
 
 export function alphaBeta(
@@ -227,48 +220,76 @@ export function alphaBeta(
     const blackMovesCount = isMax ? oppMovesCount : moves.length;
     const standPat = evaluateBoard(board, whiteMovesCount, blackMovesCount, inv, weights, currentMove, currentPlayer, lostPatterns, winPatterns);
 
-    // Quiescence: only explore tactical tower-completion moves at leaf.
-    const tactical = moves.filter((m) => {
-      const cell = board[m.row][m.col];
-      const pieces = pieceCounts(cell);
-      if (pieces.white + pieces.black !== 2) return false;
-      const missing = !cell.square ? "square" : !cell.triangle ? "triangle" : "circle";
-      if (m.shape !== missing) return false;
-      const own = pieces[currentPlayer] + 1;
-      const oppC = pieces[currentPlayer === "white" ? "black" : "white"];
-      return own > oppC;
-    });
-
-    if (tactical.length === 0 || depth <= -2) {
-      return { score: standPat, move: null };
-    }
-
-    if (isMax) {
-      let best = standPat;
-      if (best >= beta) return { score: best, move: null };
-      if (best > alpha) alpha = best;
-      for (const m of tactical) {
-        const { board: nb, inv: ni } = applyMove(board, inv, m, "white");
-        const nl: LastMove = { shape: m.shape, row: m.row, col: m.col, dir: m.dir, by: "white" };
-        const r = alphaBeta(nb, nl, whiteFirstShape, historyLen + 1, depth - 1, alpha, beta, false, ni, weights, stats, lostPatterns, winPatterns, m, options);
-        if (r.score > best) best = r.score;
-        if (best > alpha) alpha = best;
-        if (alpha >= beta) break;
+    if (options.exact) {
+      if (depth <= -1) return { score: standPat, move: null };
+      // One-ply full-width extension at leaf for exact mode
+      if (isMax) {
+        let best = -Infinity;
+        for (const m of moves) {
+          const { board: nb, inv: ni } = applyMove(board, inv, m, "white");
+          const nl: LastMove = { shape: m.shape, row: m.row, col: m.col, dir: m.dir, by: "white" };
+          const r = alphaBeta(nb, nl, whiteFirstShape, historyLen + 1, -1, alpha, beta, false, ni, weights, stats, lostPatterns, winPatterns, m, options);
+          if (r.score > best) best = r.score;
+          if (best > alpha) alpha = best;
+          if (alpha >= beta) break;
+        }
+        return { score: best === -Infinity ? standPat : best, move: null };
+      } else {
+        let best = Infinity;
+        for (const m of moves) {
+          const { board: nb, inv: ni } = applyMove(board, inv, m, "black");
+          const nl: LastMove = { shape: m.shape, row: m.row, col: m.col, dir: m.dir, by: "black" };
+          const r = alphaBeta(nb, nl, whiteFirstShape, historyLen + 1, -1, alpha, beta, true, ni, weights, stats, lostPatterns, winPatterns, m, options);
+          if (r.score < best) best = r.score;
+          if (best < beta) beta = best;
+          if (alpha >= beta) break;
+        }
+        return { score: best === Infinity ? standPat : best, move: null };
       }
-      return { score: best, move: null };
     } else {
-      let best = standPat;
-      if (best <= alpha) return { score: best, move: null };
-      if (best < beta) beta = best;
-      for (const m of tactical) {
-        const { board: nb, inv: ni } = applyMove(board, inv, m, "black");
-        const nl: LastMove = { shape: m.shape, row: m.row, col: m.col, dir: m.dir, by: "black" };
-        const r = alphaBeta(nb, nl, whiteFirstShape, historyLen + 1, depth - 1, alpha, beta, true, ni, weights, stats, lostPatterns, winPatterns, m, options);
-        if (r.score < best) best = r.score;
-        if (best < beta) beta = best;
-        if (alpha >= beta) break;
+      // Quiescence: only explore tactical tower-completion moves at leaf.
+      const tactical = moves.filter((m) => {
+        const cell = board[m.row][m.col];
+        const pieces = pieceCounts(cell);
+        if (pieces.white + pieces.black !== 2) return false;
+        const missing = !cell.square ? "square" : !cell.triangle ? "triangle" : "circle";
+        if (m.shape !== missing) return false;
+        const own = pieces[currentPlayer] + 1;
+        const oppC = pieces[currentPlayer === "white" ? "black" : "white"];
+        return own > oppC;
+      });
+
+      if (tactical.length === 0 || depth <= -2) {
+        return { score: standPat, move: null };
       }
-      return { score: best, move: null };
+
+      if (isMax) {
+        let best = standPat;
+        if (best >= beta) return { score: best, move: null };
+        if (best > alpha) alpha = best;
+        for (const m of tactical) {
+          const { board: nb, inv: ni } = applyMove(board, inv, m, "white");
+          const nl: LastMove = { shape: m.shape, row: m.row, col: m.col, dir: m.dir, by: "white" };
+          const r = alphaBeta(nb, nl, whiteFirstShape, historyLen + 1, depth - 1, alpha, beta, false, ni, weights, stats, lostPatterns, winPatterns, m, options);
+          if (r.score > best) best = r.score;
+          if (best > alpha) alpha = best;
+          if (alpha >= beta) break;
+        }
+        return { score: best, move: null };
+      } else {
+        let best = standPat;
+        if (best <= alpha) return { score: best, move: null };
+        if (best < beta) beta = best;
+        for (const m of tactical) {
+          const { board: nb, inv: ni } = applyMove(board, inv, m, "black");
+          const nl: LastMove = { shape: m.shape, row: m.row, col: m.col, dir: m.dir, by: "black" };
+          const r = alphaBeta(nb, nl, whiteFirstShape, historyLen + 1, depth - 1, alpha, beta, true, ni, weights, stats, lostPatterns, winPatterns, m, options);
+          if (r.score < best) best = r.score;
+          if (best < beta) beta = best;
+          if (alpha >= beta) break;
+        }
+        return { score: best, move: null };
+      }
     }
   }
 
@@ -363,18 +384,17 @@ export function getAIMove(
   }
 
   if (options.enableOpeningBook && historyLen < 6 && winPatterns.length > 0) {
-    const boardHash = hashBoard(board, player);
-    const candidates = winPatterns.filter((wp) => wp.player === player && wp.boardHash === boardHash);
-    for (const wp of candidates) {
-      const found = moves.find((m) => hashMove(m) === hashMove(wp.move));
-      if (found) return { move: found, stats: { nodes: 0, patternsAvoided: 0, eval: 0 } };
+    for (const m of moves) {
+      const canon = canonicalizePattern(board, player, m);
+      const hit = winPatterns.find((wp) => wp.player === player && wp.boardHash === canon.hash && hashMove(wp.move) === hashMove(canon.move));
+      if (hit) return { move: m, stats: { nodes: 0, patternsAvoided: 0, eval: 0 } };
     }
   }
 
   let maxDepth = difficulty === "normal" ? 3 : difficulty === "hard" ? 4 : 5;
   const totalInv = inv.white.square+inv.white.triangle+inv.white.circle+inv.black.square+inv.black.triangle+inv.black.circle;
-  const endgame = totalInv <= 10; // few pieces left -> search deeper
-  if (endgame) maxDepth += 2;
+  const endgame = totalInv <= 12; // few pieces left -> search deeper/exact
+  if (endgame) maxDepth = Math.max(maxDepth + 4, 10);
   const stats: SearchStats = { nodes: 0, patternsAvoided: 0 };
   const tt = options.enableTransposition ? new Map<string, { depth: number; score: number; flag: "exact" | "lower" | "upper"; move: FullLegalMove | null }>() : undefined;
   const killers: FullLegalMove[][] = Array.from({ length: maxDepth + 2 }, () => []);
@@ -389,7 +409,7 @@ export function getAIMove(
     const scored = moves.map((m) => {
       const { board: nextBoard, inv: nextInv } = applyMove(board, inv, m, player);
       const nextLast: LastMove = { shape: m.shape, row: m.row, col: m.col, dir: m.dir, by: player };
-      const res = alphaBeta(nextBoard, nextLast, whiteFirstShape, historyLen + 1, Math.max(1, maxDepth - 1), -Infinity, Infinity, !isMax, nextInv, weights, stats, lostPatterns, winPatterns, m, { useTranspositionTable: !!options.enableTransposition, transpositionTable: tt, nodeLimit, deadlineMs, killers, historyTable });
+      const res = alphaBeta(nextBoard, nextLast, whiteFirstShape, historyLen + 1, Math.max(1, maxDepth - 1), -Infinity, Infinity, !isMax, nextInv, weights, stats, lostPatterns, winPatterns, m, { useTranspositionTable: !!options.enableTransposition, transpositionTable: tt, nodeLimit, deadlineMs, killers, historyTable, exact: endgame });
       return { move: m, score: isMax ? res.score : -res.score };
     }).sort((a, b) => b.score - a.score);
     const top = scored.slice(0, Math.min(5, scored.length));
@@ -428,7 +448,7 @@ export function getAIMove(
       for (const m of ordered) {
         const { board: nextBoard, inv: nextInv } = applyMove(board, inv, m, player);
         const nextLast: LastMove = { shape: m.shape, row: m.row, col: m.col, dir: m.dir, by: player };
-        const res = alphaBeta(nextBoard, nextLast, whiteFirstShape, historyLen + 1, d - 1, alpha, beta, !isMax, nextInv, weights, stats, lostPatterns, winPatterns, m, { useTranspositionTable: !!options.enableTransposition, transpositionTable: tt, nodeLimit, deadlineMs, killers, historyTable });
+        const res = alphaBeta(nextBoard, nextLast, whiteFirstShape, historyLen + 1, d - 1, alpha, beta, !isMax, nextInv, weights, stats, lostPatterns, winPatterns, m, { useTranspositionTable: !!options.enableTransposition, transpositionTable: tt, nodeLimit, deadlineMs, killers, historyTable, exact: endgame });
         scores.push({ move: m, score: res.score });
         if (isMax) {
           if (res.score > localBestScore) { localBestScore = res.score; localBest = m; }

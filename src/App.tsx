@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { DEFAULT_WEIGHTS, DIRS, MAX_PATTERNS } from "./engine/constants";
 import { appendBoundedPatterns, extractLearningPatterns, sanitizeWeights, updateWeightsTD } from "./engine/learning";
+import { canonicalizePattern } from "./engine/symmetry";
 import GameWorker from "./workers/gameWorker.ts?worker&inline";
 import {
   checkGameOverState,
@@ -11,7 +12,6 @@ import {
   getBannedShape,
   getFeatureVector,
   getLegalMoves,
-  hashBoard,
   isDirValidForCell,
   partialOwner,
   startingInventory,
@@ -407,21 +407,23 @@ export default function App() {
         // Learn to avoid proven-loss moves discovered by search.
         const proven = result.stats.provenLossMoves ?? [];
         if (proven.length > 0) {
-          const bHash = hashBoard(s.board, s.currentPlayer);
           const wMovesN = generateAllLegalMoves(s.board, s.lastMove, s.inventory.white, getBannedShape("white", s.moveHistoryLen, s.whiteFirstShape)).length;
           const bMovesN = generateAllLegalMoves(s.board, s.lastMove, s.inventory.black, getBannedShape("black", s.moveHistoryLen, s.whiteFirstShape)).length;
           const feats = getFeatureVector(s.board, wMovesN, bMovesN, s.inventory);
           const newLosses = proven
             .slice(0, 4)
             .filter((m) => !(m.row === result.move.row && m.col === result.move.col && m.shape === result.move.shape && m.dir === result.move.dir))
-            .map((m) => ({
-              boardHash: bHash,
-              features: feats,
-              move: m,
-              player: s.currentPlayer,
-              gamePhase: s.moveHistoryLen,
-              timestamp: Date.now(),
-            }));
+            .map((m) => {
+              const canon = canonicalizePattern(s.board, s.currentPlayer, m);
+              return {
+                boardHash: canon.hash,
+                features: feats,
+                move: canon.move,
+                player: s.currentPlayer,
+                gamePhase: s.moveHistoryLen,
+                timestamp: Date.now(),
+              };
+            });
           if (newLosses.length > 0) {
             setLostPatterns((prev) => appendBoundedPatterns(prev, newLosses, MAX_PATTERNS));
             setLearningHistory((prev) => ({ ...prev, patternsLearned: prev.patternsLearned + newLosses.length, lastUpdateTime: Date.now() }));
