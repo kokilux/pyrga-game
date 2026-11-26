@@ -56,7 +56,17 @@ src/
   utils/cn.ts    # className utility (currently unused)
 ```
 
+## Deployment (GitHub Pages)
+
+This repo includes a GitHub Actions workflow at `.github/workflows/deploy-pages.yml`.
+
+1. In GitHub repository settings, open **Settings → Pages**.
+2. Set **Source** to **GitHub Actions**.
+3. Push to `main` (or run the workflow manually from Actions). The site will be deployed to `https://kokilux.github.io/pyrga-game/`.
+
+For GitHub Pages builds, Vite uses `base: "/pyrga-game/"` when `GITHUB_PAGES=true`.
+
 ## Notes
 
 - Learning data is stored locally in the browser (`localStorage`); it is not synced across devices.
-- This repository is an early prototype; game engine extraction and automated tests are planned improvements.
+- The build uses `vite-plugin-singlefile`, so the main app is emitted as a single `dist/index.html`.
