@@ -167,18 +167,24 @@ function clamp(v: number, min: number, max: number): number {
   return Math.max(min, Math.min(max, v));
 }
 
+const WEIGHT_KEYS: (keyof AIWeights)[] = [
+  "tower","partial2","partial1","mobility","sqInv","trInv","ciInv","center","completion","patternAvoid",
+  "threat","oppThreat","doubleThreat","lineControl","cornerControl","shapeDiversity",
+];
+
 export function sanitizeWeights(weights: AIWeights, defaults: AIWeights): AIWeights {
-  const keys: (keyof AIWeights)[] = ["tower", "partial2", "partial1", "mobility", "sqInv", "trInv", "ciInv", "center", "completion", "patternAvoid"];
   const out = { ...defaults };
-  for (const k of keys) {
+  for (const k of WEIGHT_KEYS) {
     const val = (weights as any)[k];
     const num = typeof val === "number" && Number.isFinite(val) ? val : defaults[k];
     out[k] = clamp(num, -5000, 5000);
   }
-  // Keep patternAvoid positive-ish for usefulness
   out.patternAvoid = clamp(out.patternAvoid, 0, 5000);
-  out.tower = clamp(out.tower, 0, 5000);
+  out.tower = clamp(out.tower, 100, 5000);
   out.completion = clamp(out.completion, 0, 5000);
+  out.threat = clamp(out.threat, 0, 5000);
+  out.oppThreat = clamp(out.oppThreat, 0, 5000);
+  out.doubleThreat = clamp(out.doubleThreat, 0, 5000);
   return out;
 }
 
@@ -192,7 +198,7 @@ export function updateWeightsTD(weights: AIWeights, gameRecord: GameRecord, lear
   const lr = clamp(learningRate, 0.0001, 0.05);
   const maxAbsDelta = 4;
 
-  const keys: (keyof AIWeights)[] = ["tower", "partial2", "partial1", "mobility", "sqInv", "trInv", "ciInv", "center", "completion"];
+  const keys: (keyof AIWeights)[] = ["tower","partial2","partial1","mobility","sqInv","trInv","ciInv","center","completion","threat","oppThreat","doubleThreat","lineControl","cornerControl","shapeDiversity"];
 
   const valueOf = (f: AIWeights) =>
     f.tower * weights.tower +
@@ -203,7 +209,13 @@ export function updateWeightsTD(weights: AIWeights, gameRecord: GameRecord, lear
     f.trInv * weights.trInv +
     f.ciInv * weights.ciInv +
     f.center * weights.center +
-    f.completion * weights.completion;
+    f.completion * weights.completion +
+    f.threat * weights.threat -
+    f.oppThreat * weights.oppThreat +
+    f.doubleThreat * weights.doubleThreat +
+    f.lineControl * weights.lineControl +
+    f.cornerControl * weights.cornerControl +
+    f.shapeDiversity * weights.shapeDiversity;
 
   const values = gameRecord.moves.map((m) => valueOf(m.features));
   const n = gameRecord.moves.length;
@@ -219,7 +231,10 @@ export function updateWeightsTD(weights: AIWeights, gameRecord: GameRecord, lear
   for (let i = 0; i < n; i++) {
     const tdError = clamp(returns[i] - values[i], -4000, 4000);
     const f = gameRecord.moves[i].features;
-    for (const k of keys) accum[k] += tdError * clamp(f[k] || 0, -10, 10);
+    for (const k of keys) {
+      const sign = k === "oppThreat" ? -1 : 1;
+      accum[k] += tdError * sign * clamp(f[k] || 0, -10, 10);
+    }
   }
 
   for (const k of keys) {
@@ -230,6 +245,9 @@ export function updateWeightsTD(weights: AIWeights, gameRecord: GameRecord, lear
   newWeights.tower = clamp(newWeights.tower, 100, 5000);
   newWeights.completion = clamp(newWeights.completion, 0, 5000);
   newWeights.patternAvoid = clamp(newWeights.patternAvoid, 0, 5000);
+  newWeights.threat = clamp(newWeights.threat, 0, 5000);
+  newWeights.oppThreat = clamp(newWeights.oppThreat, 0, 5000);
+  newWeights.doubleThreat = clamp(newWeights.doubleThreat, 0, 5000);
   return newWeights;
 }
 

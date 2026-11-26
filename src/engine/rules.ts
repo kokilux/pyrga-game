@@ -253,16 +253,15 @@ export function getFeatureVector(
   blackMovesCount: number,
   inv: Inventory,
 ): AIWeights {
-  let tWhite = 0;
-  let tBlack = 0;
-  let p2White = 0;
-  let p2Black = 0;
-  let p1White = 0;
-  let p1Black = 0;
-  let cWhite = 0;
-  let cBlack = 0;
-  let compWhite = 0;
-  let compBlack = 0;
+  let tWhite = 0, tBlack = 0;
+  let p2White = 0, p2Black = 0;
+  let p1White = 0, p1Black = 0;
+  let cWhite = 0, cBlack = 0;
+  let compWhite = 0, compBlack = 0;
+  let threatWhite = 0, threatBlack = 0;
+  let doubleThreatWhite = 0, doubleThreatBlack = 0;
+  let lineControlWhite = 0, lineControlBlack = 0;
+  let cornerWhite = 0, cornerBlack = 0;
 
   for (let r = 0; r < SIZE; r++) {
     for (let c = 0; c < SIZE; c++) {
@@ -286,15 +285,44 @@ export function getFeatureVector(
         cBlack += counts.black;
       }
 
+      // Corner/edge strategic control
+      const isCorner = (r === 0 || r === 3) && (c === 0 || c === 3);
+      if (isCorner) {
+        const pc = pieceCounts(cell);
+        if (pc.white > pc.black) cornerWhite++;
+        if (pc.black > pc.white) cornerBlack++;
+      }
+
+      // Triangle line control: triangles pointing through board give influence
+      if (cell.triangle) {
+        const [dr, dc] = dirVector(cell.triangle.dir);
+        let rr = r + dr, cc = c + dc, len = 0;
+        while (inBounds(rr, cc)) { len++; rr += dr; cc += dc; }
+        if (cell.triangle.color === "white") lineControlWhite += len;
+        else lineControlBlack += len;
+      }
+
       const pieces = pieceCounts(cell);
       const sum = pieces.white + pieces.black;
       if (sum === 2 && !towerComplete(cell)) {
         const missingShape = !cell.square ? "square" : !cell.triangle ? "triangle" : "circle";
+        const whiteCan = inv.white[missingShape] > 0 && pieces.white + 1 > pieces.black;
+        const blackCan = inv.black[missingShape] > 0 && pieces.black + 1 > pieces.white;
         if (pieces.white >= 1 && inv.white[missingShape] > 0) compWhite++;
         if (pieces.black >= 1 && inv.black[missingShape] > 0) compBlack++;
+        if (whiteCan) threatWhite++;
+        if (blackCan) threatBlack++;
       }
     }
   }
+
+  // Double threats: having 2+ immediate tower completions is very strong
+  if (threatWhite >= 2) doubleThreatWhite = threatWhite - 1;
+  if (threatBlack >= 2) doubleThreatBlack = threatBlack - 1;
+
+  const shapeDiversity =
+    ((inv.white.square > 0 ? 1 : 0) + (inv.white.triangle > 0 ? 1 : 0) + (inv.white.circle > 0 ? 1 : 0)) -
+    ((inv.black.square > 0 ? 1 : 0) + (inv.black.triangle > 0 ? 1 : 0) + (inv.black.circle > 0 ? 1 : 0));
 
   return {
     tower: tWhite - tBlack,
@@ -307,6 +335,12 @@ export function getFeatureVector(
     center: cWhite - cBlack,
     completion: compWhite - compBlack,
     patternAvoid: 0,
+    threat: threatWhite - threatBlack,
+    oppThreat: threatBlack - threatWhite, // perspective helper; evaluation can use both
+    doubleThreat: doubleThreatWhite - doubleThreatBlack,
+    lineControl: lineControlWhite - lineControlBlack,
+    cornerControl: cornerWhite - cornerBlack,
+    shapeDiversity,
   };
 }
 
@@ -315,15 +349,8 @@ export function featureSimilarity(f1: AIWeights, f2: AIWeights): number {
   let norm1 = 0;
   let norm2 = 0;
   const keys: (keyof AIWeights)[] = [
-    "tower",
-    "partial2",
-    "partial1",
-    "mobility",
-    "sqInv",
-    "trInv",
-    "ciInv",
-    "center",
-    "completion",
+    "tower","partial2","partial1","mobility","sqInv","trInv","ciInv","center","completion",
+    "threat","oppThreat","doubleThreat","lineControl","cornerControl","shapeDiversity",
   ];
 
   for (const k of keys) {
