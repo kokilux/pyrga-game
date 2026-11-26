@@ -49,6 +49,10 @@ export interface AIWeights {
   lineControl: number;
   cornerControl: number;
   shapeDiversity: number;
+  giveawayRisk: number;
+  linePressure: number;
+  circleTempo: number;
+  endgameRisk: number;
 }
 
 export type BoardHash = string;

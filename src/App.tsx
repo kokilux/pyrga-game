@@ -344,7 +344,8 @@ export default function App() {
       setLostPatterns((prev) => appendBoundedPatterns(prev, newLostPatterns, MAX_PATTERNS));
       setWinPatterns((prev) => appendBoundedPatterns(prev, newWinPatterns, MAX_PATTERNS));
 
-      const newWeights = updateWeightsTD(curWeights, gameRecord, curLR);
+      const humanWeight = curMode === "human" ? 1.8 : 1.2; // human games are more informative
+      const newWeights = updateWeightsTD(curWeights, gameRecord, curLR * humanWeight);
       setAiWeights(newWeights);
 
       setLearningHistory((prev) => ({
@@ -499,6 +500,8 @@ export default function App() {
       }));
       setTrainProgress(100);
       setTrainLog(`学習完了: ${size}回 | 白勝 ${result.whiteWins} / 黒勝 ${result.blackWins} / 引分 ${result.draws}`);
+      // Auto-evaluate against baseline after training
+      setTimeout(() => { void runEvaluation(); }, 200);
     } catch (e) {
       console.error("Training failed", e);
       setTrainLog(`学習エラー: ${e instanceof Error ? e.message : String(e)}`);
@@ -780,7 +783,11 @@ export default function App() {
                 <WeightBar label="w13: ライン制御" value={aiWeights.lineControl} maxVal={maxWeightValue} color="bg-cyan-400" desc="三角の向きによるライン支配" />
                 <WeightBar label="w14: 角支配" value={aiWeights.cornerControl} maxVal={maxWeightValue} color="bg-lime-400" desc="角マスの優勢" />
                 <WeightBar label="w15: 駒種多様性" value={aiWeights.shapeDiversity} maxVal={maxWeightValue} color="bg-yellow-400" desc="使える駒種の多様性" />
-                <WeightBar label="w16: パターン回避" value={aiWeights.patternAvoid} maxVal={maxWeightValue} color="bg-slate-300" desc="過去に負けにつながった手を避ける重み" />
+                <WeightBar label="w16: 見逃し危険" value={aiWeights.giveawayRisk} maxVal={maxWeightValue} color="bg-orange-300" desc="相手の即時完成を許す危険度" />
+                <WeightBar label="w17: ライン圧" value={aiWeights.linePressure} maxVal={maxWeightValue} color="bg-cyan-300" desc="三角ラインが有効マスに向いている圧力" />
+                <WeightBar label="w18: ●テンポ" value={aiWeights.circleTempo} maxVal={maxWeightValue} color="bg-blue-300" desc="同一マス完成/妨害のテンポ" />
+                <WeightBar label="w19: 終盤在庫リスク" value={aiWeights.endgameRisk} maxVal={maxWeightValue} color="bg-rose-300" desc="駒種の残り1/0による終盤リスク" />
+                <WeightBar label="w20: パターン回避" value={aiWeights.patternAvoid} maxVal={maxWeightValue} color="bg-slate-300" desc="過去に負けにつながった手を避ける重み" />
               </div>
 
               <div className="rounded-xl border border-slate-800 bg-slate-900 px-3 py-2.5 text-xs text-slate-400">

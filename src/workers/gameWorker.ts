@@ -113,6 +113,17 @@ self.onmessage = (e: MessageEvent<WorkerRequest>) => {
         }
       }
 
+      // Promotion check: if new weights are much worse than original, blend back.
+      const evalRes = evaluateAgainstBaseline(currentWeights, sanitizeWeights(p.weights, DEFAULT_WEIGHTS), 12);
+      if (evalRes.wins + evalRes.losses > 0 && evalRes.wins / Math.max(1, evalRes.wins + evalRes.losses) < 0.35) {
+        // Revert partially toward original
+        const orig = sanitizeWeights(p.weights, DEFAULT_WEIGHTS);
+        for (const k of Object.keys(currentWeights) as (keyof AIWeights)[]) {
+          (currentWeights as any)[k] = ((currentWeights as any)[k] * 0.3 + (orig as any)[k] * 0.7);
+        }
+        currentWeights = sanitizeWeights(currentWeights, DEFAULT_WEIGHTS);
+      }
+
       self.postMessage({
         type: "train-done",
         id: msg.id,
@@ -125,6 +136,7 @@ self.onmessage = (e: MessageEvent<WorkerRequest>) => {
           blackWins: bWins,
           draws,
           totalGames: p.count,
+          promotionEval: evalRes,
         },
       });
       return;

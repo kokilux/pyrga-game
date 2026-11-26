@@ -21,6 +21,10 @@ export const DEFAULT_WEIGHTS: AIWeights = {
   lineControl: 35.0,
   cornerControl: 18.0,
   shapeDiversity: 20.0,
+  giveawayRisk: 260.0,
+  linePressure: 30.0,
+  circleTempo: 40.0,
+  endgameRisk: 35.0,
 };
 
 export const WIN_SCORE = 1000000;
