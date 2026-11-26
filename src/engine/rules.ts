@@ -262,6 +262,8 @@ export function getFeatureVector(
   let doubleThreatWhite = 0, doubleThreatBlack = 0;
   let lineControlWhite = 0, lineControlBlack = 0;
   let cornerWhite = 0, cornerBlack = 0;
+  let linePressureWhite = 0, linePressureBlack = 0;
+  let circleTempoWhite = 0, circleTempoBlack = 0;
 
   for (let r = 0; r < SIZE; r++) {
     for (let c = 0; c < SIZE; c++) {
@@ -285,7 +287,6 @@ export function getFeatureVector(
         cBlack += counts.black;
       }
 
-      // Corner/edge strategic control
       const isCorner = (r === 0 || r === 3) && (c === 0 || c === 3);
       if (isCorner) {
         const pc = pieceCounts(cell);
@@ -293,11 +294,20 @@ export function getFeatureVector(
         if (pc.black > pc.white) cornerBlack++;
       }
 
-      // Triangle line control: triangles pointing through board give influence
       if (cell.triangle) {
         const [dr, dc] = dirVector(cell.triangle.dir);
         let rr = r + dr, cc = c + dc, len = 0;
-        while (inBounds(rr, cc)) { len++; rr += dr; cc += dc; }
+        while (inBounds(rr, cc)) {
+          len++;
+          const tc = board[rr][cc];
+          const tSum = (tc.square ? 1 : 0) + (tc.triangle ? 1 : 0) + (tc.circle ? 1 : 0);
+          // pressure on valuable targets: 2-piece cells or empty cells
+          if (tSum === 2 || tSum === 0) {
+            if (cell.triangle.color === "white") linePressureWhite++;
+            else linePressureBlack++;
+          }
+          rr += dr; cc += dc;
+        }
         if (cell.triangle.color === "white") lineControlWhite += len;
         else lineControlBlack += len;
       }
@@ -312,17 +322,29 @@ export function getFeatureVector(
         if (pieces.black >= 1 && inv.black[missingShape] > 0) compBlack++;
         if (whiteCan) threatWhite++;
         if (blackCan) threatBlack++;
+        // Circle tempo: circle can fill same cell immediately (Rule 2)
+        if (missingShape === "circle") {
+          if (whiteCan && inv.white.circle > 0) circleTempoWhite++;
+          if (blackCan && inv.black.circle > 0) circleTempoBlack++;
+        }
       }
     }
   }
 
-  // Double threats: having 2+ immediate tower completions is very strong
   if (threatWhite >= 2) doubleThreatWhite = threatWhite - 1;
   if (threatBlack >= 2) doubleThreatBlack = threatBlack - 1;
 
   const shapeDiversity =
     ((inv.white.square > 0 ? 1 : 0) + (inv.white.triangle > 0 ? 1 : 0) + (inv.white.circle > 0 ? 1 : 0)) -
     ((inv.black.square > 0 ? 1 : 0) + (inv.black.triangle > 0 ? 1 : 0) + (inv.black.circle > 0 ? 1 : 0));
+
+  // Endgame inventory risk: having only 1 left of a shape is risky
+  const endgameRiskWhite = (inv.white.square === 1 ? 1 : 0) + (inv.white.triangle === 1 ? 1 : 0) + (inv.white.circle === 1 ? 1 : 0) + (inv.white.square === 0 ? 2 : 0) + (inv.white.triangle === 0 ? 2 : 0) + (inv.white.circle === 0 ? 2 : 0);
+  const endgameRiskBlack = (inv.black.square === 1 ? 1 : 0) + (inv.black.triangle === 1 ? 1 : 0) + (inv.black.circle === 1 ? 1 : 0) + (inv.black.square === 0 ? 2 : 0) + (inv.black.triangle === 0 ? 2 : 0) + (inv.black.circle === 0 ? 2 : 0);
+
+  // Giveaway risk: 2-piece cells where opponent can complete (board-level latent danger)
+  // Already captured partly by oppThreat; keep giveawayRisk as extra for board tension.
+  const giveawayRisk = threatBlack - threatWhite; // positive means more danger for white
 
   return {
     tower: tWhite - tBlack,
@@ -336,11 +358,15 @@ export function getFeatureVector(
     completion: compWhite - compBlack,
     patternAvoid: 0,
     threat: threatWhite - threatBlack,
-    oppThreat: threatBlack - threatWhite, // perspective helper; evaluation can use both
+    oppThreat: threatBlack - threatWhite,
     doubleThreat: doubleThreatWhite - doubleThreatBlack,
     lineControl: lineControlWhite - lineControlBlack,
     cornerControl: cornerWhite - cornerBlack,
     shapeDiversity,
+    giveawayRisk,
+    linePressure: linePressureWhite - linePressureBlack,
+    circleTempo: circleTempoWhite - circleTempoBlack,
+    endgameRisk: endgameRiskWhite - endgameRiskBlack,
   };
 }
 
@@ -350,7 +376,7 @@ export function featureSimilarity(f1: AIWeights, f2: AIWeights): number {
   let norm2 = 0;
   const keys: (keyof AIWeights)[] = [
     "tower","partial2","partial1","mobility","sqInv","trInv","ciInv","center","completion",
-    "threat","oppThreat","doubleThreat","lineControl","cornerControl","shapeDiversity",
+    "threat","oppThreat","doubleThreat","lineControl","cornerControl","shapeDiversity","giveawayRisk","linePressure","circleTempo","endgameRisk",
   ];
 
   for (const k of keys) {
